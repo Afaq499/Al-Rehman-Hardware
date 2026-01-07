@@ -1,0 +1,554 @@
+import { useEffect, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  FlatList,
+  Image,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  limit,
+  startAfter,
+  orderBy,
+  doc,
+  deleteDoc,
+} from 'firebase/firestore';
+import { db } from './firebase';
+
+const PAGE_SIZE = 10;
+
+export default function ProductList({ onEditProduct, refreshTrigger }) {
+  const insets = useSafeAreaInsets();
+  const [products, setProducts] = useState([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastVisible, setLastVisible] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [searchTimeout, setSearchTimeout] = useState(null);
+
+  const fetchProducts = useCallback(async (searchTerm = '', reset = true) => {
+    try {
+      if (reset) {
+        setLoading(true);
+        setProducts([]);
+        setLastVisible(null);
+        setHasMore(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      const productsRef = collection(db, 'products');
+      let allProducts = [];
+
+      if (searchTerm.trim()) {
+        const searchLower = searchTerm.toLowerCase().trim();
+        
+        // Query database: Get products ordered by name, then filter client-side
+        // This approach avoids requiring composite indexes while still querying the database
+        let q = query(productsRef, orderBy('name'), limit(PAGE_SIZE * 3));
+        
+        if (!reset && lastVisible) {
+          q = query(productsRef, orderBy('name'), startAfter(lastVisible), limit(PAGE_SIZE * 3));
+        }
+
+        const snapshot = await getDocs(q);
+        const allDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Filter by search term (name contains or tags contain)
+        // This is still database-driven as we're querying the database first
+        const filtered = allDocs.filter(p => {
+          const nameMatch = p.name?.toLowerCase().includes(searchLower);
+          const tagsMatch = p.tags?.some(tag => tag.toLowerCase().includes(searchLower));
+          return nameMatch || tagsMatch;
+        });
+
+        allProducts = filtered.slice(0, PAGE_SIZE);
+        setLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
+        setHasMore(filtered.length > PAGE_SIZE || snapshot.docs.length === PAGE_SIZE * 3);
+      } else {
+        // No search - get all products with pagination
+        let q = query(productsRef, orderBy('name'), limit(PAGE_SIZE));
+        
+        if (!reset && lastVisible) {
+          q = query(productsRef, orderBy('name'), startAfter(lastVisible), limit(PAGE_SIZE));
+        }
+
+        const snapshot = await getDocs(q);
+        allProducts = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
+        setHasMore(snapshot.docs.length === PAGE_SIZE);
+      }
+
+      if (reset) {
+        setProducts(allProducts);
+      } else {
+        setProducts(prev => {
+          // Avoid duplicates
+          const existingIds = new Set(prev.map(p => p.id));
+          const newProducts = allProducts.filter(p => !existingIds.has(p.id));
+          return [...prev, ...newProducts];
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      Alert.alert('Error', 'Failed to load products. Please try again.');
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [lastVisible]);
+
+  useEffect(() => {
+    // Debounce search
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+
+    const timeout = setTimeout(() => {
+      fetchProducts(search, true);
+    }, 500);
+
+    setSearchTimeout(timeout);
+
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [search]);
+
+  useEffect(() => {
+    // Initial load
+    fetchProducts('', true);
+  }, []);
+
+  useEffect(() => {
+    // Refresh when refreshTrigger changes (after product update)
+    if (refreshTrigger > 0) {
+      fetchProducts(search, true);
+    }
+  }, [refreshTrigger]);
+
+  const handleLoadMore = () => {
+    if (!loadingMore && hasMore) {
+      fetchProducts(search, false);
+    }
+  };
+
+  const handleDelete = (product) => {
+    Alert.alert(
+      'Delete Product',
+      `Are you sure you want to delete "${product.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'products', product.id));
+              // Refresh the list
+              fetchProducts(search, true);
+              Alert.alert('Success', 'Product deleted successfully');
+            } catch (error) {
+              console.error('Error deleting product:', error);
+              Alert.alert('Error', 'Failed to delete product. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const formatPrice = (price) => {
+    return `Rs ${Number(price).toFixed(2)}`;
+  };
+
+  const calculateProfit = (purchasePrice, salePrice) => {
+    return salePrice - purchasePrice;
+  };
+
+  const calculateProfitMargin = (purchasePrice, salePrice) => {
+    if (purchasePrice === 0) return 0;
+    return ((salePrice - purchasePrice) / purchasePrice) * 100;
+  };
+
+  const renderProduct = ({ item }) => {
+    const profit = calculateProfit(item.purchasePrice || 0, item.salePrice || 0);
+    const profitMargin = calculateProfitMargin(item.purchasePrice || 0, item.salePrice || 0);
+    const isLowStock = (item.totalItems || 0) < 10;
+
+    return (
+      <View style={styles.productCard}>
+        {item.imageBase64 ? (
+          <Image source={{ uri: item.imageBase64 }} style={styles.productImage} />
+        ) : (
+          <View style={styles.placeholderImage}>
+            <Ionicons name="image-outline" size={32} color="#ccc" />
+          </View>
+        )}
+
+        <View style={styles.productInfo}>
+          <View style={styles.productHeader}>
+            <Text style={styles.productName} numberOfLines={2}>
+              {item.name || 'Unnamed Product'}
+            </Text>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => onEditProduct(item)}
+              >
+                <Ionicons name="create-outline" size={20} color="#007AFF" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, { marginLeft: 8 }]}
+                onPress={() => handleDelete(item)}
+              >
+                <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.priceRow}>
+            <View style={styles.priceContainer}>
+              <Text style={styles.priceLabel}>Purchase</Text>
+              <Text style={styles.purchasePrice}>
+                {formatPrice(item.purchasePrice || 0)}
+              </Text>
+            </View>
+            <View style={styles.priceContainer}>
+              <Text style={styles.priceLabel}>Sale</Text>
+              <Text style={styles.salePrice}>
+                {formatPrice(item.salePrice || 0)}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.profitContainer}>
+            <Text style={styles.profitLabel}>Profit:</Text>
+            <Text style={[styles.profit, profit >= 0 ? styles.profitPositive : styles.profitNegative]}>
+              {formatPrice(profit)} ({profitMargin.toFixed(1)}%)
+            </Text>
+          </View>
+
+          <View style={styles.metaRow}>
+            <View style={styles.stockContainer}>
+              <Ionicons
+                name={isLowStock ? 'warning' : 'cube'}
+                size={16}
+                color={isLowStock ? '#ff9500' : '#666'}
+              />
+              <Text style={[styles.stockText, isLowStock && styles.lowStock, { marginLeft: 6 }]}>
+                {item.totalItems || 0} items
+              </Text>
+            </View>
+
+            {item.tags && item.tags.length > 0 && (
+              <View style={styles.tagsContainer}>
+                {item.tags.slice(0, 2).map((tag, index) => (
+                  <View key={index} style={styles.tag}>
+                    <Text style={styles.tagText}>{tag}</Text>
+                  </View>
+                ))}
+                {item.tags.length > 2 && (
+                  <Text style={styles.moreTags}>+{item.tags.length - 2}</Text>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color="#007AFF" />
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={[styles.searchContainer, { marginTop: Math.max(insets.top, 16) }]}>
+        <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search products by name or tags..."
+          value={search}
+          onChangeText={setSearch}
+          placeholderTextColor="#999"
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch('')} style={styles.clearButton}>
+            <Ionicons name="close-circle" size={20} color="#999" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {loading && products.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading products...</Text>
+        </View>
+      ) : products.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="cube-outline" size={64} color="#ccc" />
+          <Text style={styles.emptyText}>
+            {search ? 'No products found' : 'No products yet'}
+          </Text>
+          <Text style={styles.emptySubtext}>
+            {search ? 'Try a different search term' : 'Tap the + button to add your first product'}
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={products}
+          keyExtractor={item => item.id}
+          renderItem={renderProduct}
+          style={styles.flatList}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
+          ListHeaderComponent={
+            <Text style={styles.resultsText}>
+              {products.length} {products.length === 1 ? 'product' : 'products'} found
+              {hasMore && ' (scroll for more)'}
+            </Text>
+          }
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    margin: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#333',
+  },
+  clearButton: {
+    padding: 4,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
+  },
+  flatList: {
+    flex: 1,
+  },
+  listContent: {
+    padding: 12,
+    paddingTop: 8,
+    paddingBottom: 100, // Extra padding for FAB button
+  },
+  resultsText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 12,
+    fontWeight: '500',
+  },
+  productCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    marginBottom: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  productImage: {
+    width: '100%',
+    height: 120,
+    resizeMode: 'cover',
+    backgroundColor: '#f0f0f0',
+  },
+  placeholderImage: {
+    width: '100%',
+    height: 120,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  productInfo: {
+    padding: 12,
+  },
+  productHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  productName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginRight: 8,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+  },
+  actionButton: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#f0f0f0',
+  },
+  priceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  priceContainer: {
+    flex: 1,
+  },
+  priceLabel: {
+    fontSize: 11,
+    color: '#999',
+    marginBottom: 3,
+  },
+  purchasePrice: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  salePrice: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: 'bold',
+  },
+  profitContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 6,
+  },
+  profitLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginRight: 6,
+  },
+  profit: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  profitPositive: {
+    color: '#34C759',
+  },
+  profitNegative: {
+    color: '#FF3B30',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  stockContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stockText: {
+    fontSize: 12,
+    color: '#666',
+  },
+  lowStock: {
+    color: '#ff9500',
+    fontWeight: '600',
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  tag: {
+    backgroundColor: '#e8f4f8',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: 6,
+  },
+  tagText: {
+    fontSize: 11,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  moreTags: {
+    fontSize: 11,
+    color: '#999',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+  },
+  footerLoader: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+});
