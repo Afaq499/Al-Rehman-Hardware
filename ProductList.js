@@ -233,17 +233,21 @@ export default function ProductList({ onEditProduct, refreshTrigger, categoryRef
 
     return (
       <View style={styles.productCard}>
-        {item.imageBase64 ? (
-          <Image source={{ uri: item.imageBase64 }} style={styles.productImage} />
-        ) : (
-          <View style={styles.placeholderImage}>
-            <Ionicons name="image-outline" size={32} color="#ccc" />
-          </View>
-        )}
+        {/* Image on left */}
+        <View style={styles.imageContainer}>
+          {item.imageBase64 ? (
+            <Image source={{ uri: item.imageBase64 }} style={styles.productImage} />
+          ) : (
+            <View style={styles.placeholderImage}>
+              <Ionicons name="image-outline" size={24} color="#ccc" />
+            </View>
+          )}
+        </View>
 
+        {/* Details on right */}
         <View style={styles.productInfo}>
           <View style={styles.productHeader}>
-            <Text style={styles.productName} numberOfLines={2}>
+            <Text style={styles.productName} numberOfLines={1}>
               {item.name || 'Unnamed Product'}
             </Text>
             <View style={styles.actionButtons}>
@@ -251,13 +255,13 @@ export default function ProductList({ onEditProduct, refreshTrigger, categoryRef
                 style={styles.actionButton}
                 onPress={() => onEditProduct(item)}
               >
-                <Ionicons name="create-outline" size={20} color="#007AFF" />
+                <Ionicons name="create-outline" size={16} color="#007AFF" />
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.actionButton, { marginLeft: 8 }]}
+                style={[styles.actionButton, { marginLeft: 4 }]}
                 onPress={() => handleDelete(item)}
               >
-                <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+                <Ionicons name="trash-outline" size={16} color="#FF3B30" />
               </TouchableOpacity>
             </View>
           </View>
@@ -265,13 +269,13 @@ export default function ProductList({ onEditProduct, refreshTrigger, categoryRef
           <View style={styles.priceRow}>
             <View style={styles.priceContainer}>
               <Text style={styles.priceLabel}>Purchase</Text>
-              <Text style={styles.purchasePrice}>
+              <Text style={styles.purchasePrice} numberOfLines={1}>
                 {formatPrice(item.purchasePrice || 0)}
               </Text>
             </View>
             <View style={styles.priceContainer}>
               <Text style={styles.priceLabel}>Sale</Text>
-              <Text style={styles.salePrice}>
+              <Text style={styles.salePrice} numberOfLines={1}>
                 {formatPrice(item.salePrice || 0)}
               </Text>
             </View>
@@ -279,7 +283,7 @@ export default function ProductList({ onEditProduct, refreshTrigger, categoryRef
 
           <View style={styles.profitContainer}>
             <Text style={styles.profitLabel}>Profit:</Text>
-            <Text style={[styles.profit, profit >= 0 ? styles.profitPositive : styles.profitNegative]}>
+            <Text style={[styles.profit, profit >= 0 ? styles.profitPositive : styles.profitNegative]} numberOfLines={1}>
               {formatPrice(profit)} ({profitMargin.toFixed(1)}%)
             </Text>
           </View>
@@ -288,34 +292,22 @@ export default function ProductList({ onEditProduct, refreshTrigger, categoryRef
             <View style={styles.stockContainer}>
               <Ionicons
                 name={isLowStock ? 'warning' : 'cube'}
-                size={16}
+                size={12}
                 color={isLowStock ? '#ff9500' : '#666'}
               />
-              <Text style={[styles.stockText, isLowStock && styles.lowStock, { marginLeft: 6 }]}>
-                {item.totalItems || 0} items
+              <Text style={[styles.stockText, isLowStock && styles.lowStock]}>
+                {item.totalItems || 0}
               </Text>
             </View>
 
-            <View style={styles.metaRowBottom}>
-              {item.categoryId && getCategoryName(item.categoryId) && (
-                <View style={styles.categoryBadge}>
-                  <Ionicons name="folder" size={12} color="#007AFF" />
-                  <Text style={styles.categoryText}>{getCategoryName(item.categoryId)}</Text>
-                </View>
-              )}
-              {item.tags && item.tags.length > 0 && (
-                <View style={styles.tagsContainer}>
-                  {item.tags.slice(0, 2).map((tag, index) => (
-                    <View key={index} style={styles.tag}>
-                      <Text style={styles.tagText}>{tag}</Text>
-                    </View>
-                  ))}
-                  {item.tags.length > 2 && (
-                    <Text style={styles.moreTags}>+{item.tags.length - 2}</Text>
-                  )}
-                </View>
-              )}
-            </View>
+            {item.categoryId && getCategoryName(item.categoryId) && (
+              <View style={styles.categoryBadge}>
+                <Ionicons name="folder" size={10} color="#007AFF" />
+                <Text style={styles.categoryText} numberOfLines={1}>
+                  {getCategoryName(item.categoryId)}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -514,7 +506,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 12,
     paddingTop: 8,
     paddingBottom: 100, // Extra padding for FAB button
   },
@@ -526,91 +517,106 @@ const styles = StyleSheet.create({
   },
   productCard: {
     backgroundColor: '#fff',
-    borderRadius: 10,
-    marginBottom: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    marginHorizontal: 12,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+    flexDirection: 'row',
+    padding: 8,
+    minHeight: 100,
+  },
+  imageContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: '#f0f0f0',
+    marginRight: 10,
   },
   productImage: {
-    width: '100%',
-    height: 120,
+    width: 100,
+    height: 100,
     resizeMode: 'cover',
     backgroundColor: '#f0f0f0',
   },
   placeholderImage: {
-    width: '100%',
-    height: 120,
+    width: 100,
+    height: 100,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   productInfo: {
-    padding: 12,
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingVertical: 2,
   },
   productHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   productName: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#333',
-    marginRight: 8,
+    marginRight: 6,
   },
   actionButtons: {
     flexDirection: 'row',
   },
   actionButton: {
-    padding: 6,
-    borderRadius: 6,
+    padding: 4,
+    borderRadius: 4,
     backgroundColor: '#f0f0f0',
   },
   priceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 4,
+    gap: 8,
   },
   priceContainer: {
     flex: 1,
   },
   priceLabel: {
-    fontSize: 11,
+    fontSize: 9,
     color: '#999',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   purchasePrice: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#666',
     fontWeight: '500',
   },
   salePrice: {
-    fontSize: 16,
+    fontSize: 13,
     color: '#007AFF',
     fontWeight: 'bold',
   },
   profitContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    marginBottom: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
     backgroundColor: '#f9f9f9',
-    borderRadius: 6,
+    borderRadius: 4,
   },
   profitLabel: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#666',
-    marginRight: 6,
+    marginRight: 4,
   },
   profit: {
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '600',
   },
   profitPositive: {
@@ -623,31 +629,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 6,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    marginTop: 2,
   },
-  metaRowBottom: {
+  stockContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
+    gap: 4,
+  },
+  stockText: {
+    fontSize: 10,
+    color: '#666',
+  },
+  lowStock: {
+    color: '#ff9500',
+    fontWeight: '600',
   },
   categoryBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#e8f4f8',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginRight: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    maxWidth: '60%',
   },
   categoryText: {
-    fontSize: 11,
+    fontSize: 9,
     color: '#007AFF',
     fontWeight: '500',
-    marginLeft: 4,
+    marginLeft: 3,
   },
   filterContainer: {
     flexDirection: 'row',
