@@ -9,6 +9,8 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,7 +29,7 @@ import { db } from './firebase';
 
 const PAGE_SIZE = 10;
 
-export default function ProductList({ onEditProduct, refreshTrigger }) {
+export default function ProductList({ onEditProduct, refreshTrigger, categoryRefreshTrigger }) {
   const insets = useSafeAreaInsets();
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
@@ -36,8 +38,26 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
   const [lastVisible, setLastVisible] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [searchTimeout, setSearchTimeout] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  const [categoryDropdownVisible, setCategoryDropdownVisible] = useState(false);
 
-  const fetchProducts = useCallback(async (searchTerm = '', reset = true) => {
+  const fetchCategories = useCallback(async () => {
+    try {
+      const categoriesRef = collection(db, 'categories');
+      const q = query(categoriesRef, orderBy('name'));
+      const snapshot = await getDocs(q);
+      const categoriesList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setCategories(categoriesList);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  }, []);
+
+  const fetchProducts = useCallback(async (searchTerm = '', categoryId = null, reset = true) => {
     try {
       if (reset) {
         setLoading(true);
@@ -65,12 +85,12 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
         const snapshot = await getDocs(q);
         const allDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
-        // Filter by search term (name contains or tags contain)
-        // This is still database-driven as we're querying the database first
+        // Filter by search term (name contains or tags contain) and category
         const filtered = allDocs.filter(p => {
           const nameMatch = p.name?.toLowerCase().includes(searchLower);
           const tagsMatch = p.tags?.some(tag => tag.toLowerCase().includes(searchLower));
-          return nameMatch || tagsMatch;
+          const categoryMatch = !categoryId || p.categoryId === categoryId;
+          return (nameMatch || tagsMatch) && categoryMatch;
         });
 
         allProducts = filtered.slice(0, PAGE_SIZE);
@@ -78,16 +98,24 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
         setHasMore(filtered.length > PAGE_SIZE || snapshot.docs.length === PAGE_SIZE * 3);
       } else {
         // No search - get all products with pagination
-        let q = query(productsRef, orderBy('name'), limit(PAGE_SIZE));
+        let q = query(productsRef, orderBy('name'), limit(PAGE_SIZE * 3));
         
         if (!reset && lastVisible) {
-          q = query(productsRef, orderBy('name'), startAfter(lastVisible), limit(PAGE_SIZE));
+          q = query(productsRef, orderBy('name'), startAfter(lastVisible), limit(PAGE_SIZE * 3));
         }
 
         const snapshot = await getDocs(q);
-        allProducts = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        const allDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Filter by category if selected
+        if (categoryId) {
+          allProducts = allDocs.filter(p => p.categoryId === categoryId).slice(0, PAGE_SIZE);
+        } else {
+          allProducts = allDocs.slice(0, PAGE_SIZE);
+        }
+        
         setLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
-        setHasMore(snapshot.docs.length === PAGE_SIZE);
+        setHasMore(allDocs.length === PAGE_SIZE * 3);
       }
 
       if (reset) {
@@ -107,7 +135,11 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [lastVisible]);
+  }, [lastVisible, selectedCategoryId]);
+
+  useEffect(() => {
+    fetchCategories();
+  }, [categoryRefreshTrigger]);
 
   useEffect(() => {
     // Debounce search
@@ -116,7 +148,7 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
     }
 
     const timeout = setTimeout(() => {
-      fetchProducts(search, true);
+      fetchProducts(search, selectedCategoryId, true);
     }, 500);
 
     setSearchTimeout(timeout);
@@ -124,24 +156,36 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
     return () => {
       if (timeout) clearTimeout(timeout);
     };
-  }, [search]);
+  }, [search, selectedCategoryId]);
 
   useEffect(() => {
     // Initial load
-    fetchProducts('', true);
+    fetchProducts('', selectedCategoryId, true);
   }, []);
 
   useEffect(() => {
     // Refresh when refreshTrigger changes (after product update)
     if (refreshTrigger > 0) {
-      fetchProducts(search, true);
+      fetchProducts(search, selectedCategoryId, true);
     }
   }, [refreshTrigger]);
 
   const handleLoadMore = () => {
     if (!loadingMore && hasMore) {
-      fetchProducts(search, false);
+      fetchProducts(search, selectedCategoryId, false);
     }
+  };
+
+  const getCategoryName = (categoryId) => {
+    if (!categoryId) return null;
+    const category = categories.find(c => c.id === categoryId);
+    return category ? category.name : null;
+  };
+
+  const getSelectedCategoryName = () => {
+    if (!selectedCategoryId) return 'All Categories';
+    const category = categories.find(c => c.id === selectedCategoryId);
+    return category ? category.name : 'All Categories';
   };
 
   const handleDelete = (product) => {
@@ -157,7 +201,7 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
             try {
               await deleteDoc(doc(db, 'products', product.id));
               // Refresh the list
-              fetchProducts(search, true);
+              fetchProducts(search, selectedCategoryId, true);
               Alert.alert('Success', 'Product deleted successfully');
             } catch (error) {
               console.error('Error deleting product:', error);
@@ -252,18 +296,26 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
               </Text>
             </View>
 
-            {item.tags && item.tags.length > 0 && (
-              <View style={styles.tagsContainer}>
-                {item.tags.slice(0, 2).map((tag, index) => (
-                  <View key={index} style={styles.tag}>
-                    <Text style={styles.tagText}>{tag}</Text>
-                  </View>
-                ))}
-                {item.tags.length > 2 && (
-                  <Text style={styles.moreTags}>+{item.tags.length - 2}</Text>
-                )}
-              </View>
-            )}
+            <View style={styles.metaRowBottom}>
+              {item.categoryId && getCategoryName(item.categoryId) && (
+                <View style={styles.categoryBadge}>
+                  <Ionicons name="folder" size={12} color="#007AFF" />
+                  <Text style={styles.categoryText}>{getCategoryName(item.categoryId)}</Text>
+                </View>
+              )}
+              {item.tags && item.tags.length > 0 && (
+                <View style={styles.tagsContainer}>
+                  {item.tags.slice(0, 2).map((tag, index) => (
+                    <View key={index} style={styles.tag}>
+                      <Text style={styles.tagText}>{tag}</Text>
+                    </View>
+                  ))}
+                  {item.tags.length > 2 && (
+                    <Text style={styles.moreTags}>+{item.tags.length - 2}</Text>
+                  )}
+                </View>
+              )}
+            </View>
           </View>
         </View>
       </View>
@@ -296,6 +348,86 @@ export default function ProductList({ onEditProduct, refreshTrigger }) {
           </TouchableOpacity>
         )}
       </View>
+
+      <View style={styles.filterContainer}>
+        <TouchableOpacity
+          style={styles.categoryFilter}
+          onPress={() => setCategoryDropdownVisible(true)}
+        >
+          <Ionicons name="filter" size={18} color="#007AFF" />
+          <Text style={styles.categoryFilterText}>{getSelectedCategoryName()}</Text>
+          <Ionicons name="chevron-down" size={18} color="#007AFF" />
+        </TouchableOpacity>
+        {selectedCategoryId && (
+          <TouchableOpacity
+            style={styles.clearFilterButton}
+            onPress={() => setSelectedCategoryId(null)}
+          >
+            <Ionicons name="close-circle" size={18} color="#666" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Category Filter Dropdown Modal */}
+      <Modal
+        visible={categoryDropdownVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setCategoryDropdownVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownOverlay}
+          activeOpacity={1}
+          onPress={() => setCategoryDropdownVisible(false)}
+        >
+          <View style={styles.dropdownModal}>
+            <View style={styles.dropdownHeader}>
+              <Text style={styles.dropdownTitle}>Filter by Category</Text>
+              <TouchableOpacity onPress={() => setCategoryDropdownVisible(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.dropdownList}>
+              <TouchableOpacity
+                style={[styles.dropdownItem, !selectedCategoryId && styles.dropdownItemSelected]}
+                onPress={() => {
+                  setSelectedCategoryId(null);
+                  setCategoryDropdownVisible(false);
+                }}
+              >
+                <Text style={[styles.dropdownItemText, !selectedCategoryId && styles.dropdownItemTextSelected]}>
+                  All Categories
+                </Text>
+                {!selectedCategoryId && (
+                  <Ionicons name="checkmark" size={20} color="#007AFF" />
+                )}
+              </TouchableOpacity>
+              {categories.map((category) => (
+                <TouchableOpacity
+                  key={category.id}
+                  style={[styles.dropdownItem, selectedCategoryId === category.id && styles.dropdownItemSelected]}
+                  onPress={() => {
+                    setSelectedCategoryId(category.id);
+                    setCategoryDropdownVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selectedCategoryId === category.id && styles.dropdownItemTextSelected]}>
+                    {category.name}
+                  </Text>
+                  {selectedCategoryId === category.id && (
+                    <Ionicons name="checkmark" size={20} color="#007AFF" />
+                  )}
+                </TouchableOpacity>
+              ))}
+              {categories.length === 0 && (
+                <View style={styles.dropdownEmpty}>
+                  <Text style={styles.dropdownEmptyText}>No categories available</Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {loading && products.length === 0 ? (
         <View style={styles.loadingContainer}>
@@ -495,6 +627,113 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
+  },
+  metaRowBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  categoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e8f4f8',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  categoryText: {
+    fontSize: 11,
+    color: '#007AFF',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  filterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 8,
+    gap: 8,
+  },
+  categoryFilter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    flex: 1,
+    gap: 8,
+  },
+  categoryFilterText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  clearFilterButton: {
+    padding: 8,
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  dropdownModal: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '100%',
+    maxHeight: '60%',
+    overflow: 'hidden',
+  },
+  dropdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  dropdownTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  dropdownList: {
+    maxHeight: 300,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#f0f7ff',
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: '#333',
+    flex: 1,
+  },
+  dropdownItemTextSelected: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  dropdownEmpty: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  dropdownEmptyText: {
+    fontSize: 16,
+    color: '#666',
   },
   stockContainer: {
     flexDirection: 'row',

@@ -16,10 +16,10 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useEffect } from 'react';
-import { addDoc, collection, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, updateDoc, doc, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from './firebase';
 
-export default function AddProduct({ visible, onClose, product = null, onProductSaved }) {
+export default function AddProduct({ visible, onClose, product = null, onProductSaved, categoryRefreshTrigger }) {
   const [name, setName] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('');
   const [salePrice, setSalePrice] = useState('');
@@ -27,8 +27,15 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
   const [totalItems, setTotalItems] = useState('');
   const [imageBase64, setImageBase64] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  const [categoryDropdownVisible, setCategoryDropdownVisible] = useState(false);
 
   const isEditMode = !!product;
+
+  useEffect(() => {
+    fetchCategories();
+  }, [visible, categoryRefreshTrigger]);
 
   useEffect(() => {
     if (product) {
@@ -38,6 +45,7 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
       setTags(product.tags?.join(', ') || '');
       setTotalItems(product.totalItems?.toString() || '');
       setImageBase64(product.imageBase64 || null);
+      setSelectedCategoryId(product.categoryId || null);
     } else {
       // Reset form for add mode
       setName('');
@@ -46,8 +54,30 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
       setTags('');
       setTotalItems('');
       setImageBase64(null);
+      setSelectedCategoryId(null);
     }
   }, [product, visible]);
+
+  const fetchCategories = async () => {
+    try {
+      const categoriesRef = collection(db, 'categories');
+      const q = query(categoriesRef, orderBy('name'));
+      const snapshot = await getDocs(q);
+      const categoriesList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setCategories(categoriesList);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  };
+
+  const getSelectedCategoryName = () => {
+    if (!selectedCategoryId) return 'Select category (optional)';
+    const category = categories.find(c => c.id === selectedCategoryId);
+    return category ? category.name : 'Select category (optional)';
+  };
 
   const takePicture = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -133,6 +163,7 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
         tags: tagsArray,
         totalItems: Number(totalItems),
         imageBase64,
+        ...(selectedCategoryId && { categoryId: selectedCategoryId }),
       };
 
       if (isEditMode) {
@@ -166,6 +197,8 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
     setTags('');
     setTotalItems('');
     setImageBase64(null);
+    setSelectedCategoryId(null);
+    setCategoryDropdownVisible(false);
     onClose();
   };
 
@@ -198,6 +231,19 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
                 onChangeText={setName}
                 placeholderTextColor="#999"
               />
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Category</Text>
+              <TouchableOpacity
+                style={styles.dropdown}
+                onPress={() => setCategoryDropdownVisible(true)}
+              >
+                <Text style={[styles.dropdownText, !selectedCategoryId && styles.dropdownPlaceholder]}>
+                  {getSelectedCategoryName()}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#666" />
+              </TouchableOpacity>
             </View>
 
             <View style={styles.row}>
@@ -276,6 +322,68 @@ export default function AddProduct({ visible, onClose, product = null, onProduct
               )}
             </View>
           </ScrollView>
+
+          {/* Category Dropdown Modal */}
+          <Modal
+            visible={categoryDropdownVisible}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setCategoryDropdownVisible(false)}
+          >
+            <TouchableOpacity
+              style={styles.dropdownOverlay}
+              activeOpacity={1}
+              onPress={() => setCategoryDropdownVisible(false)}
+            >
+              <View style={styles.dropdownModal}>
+                <View style={styles.dropdownHeader}>
+                  <Text style={styles.dropdownTitle}>Select Category</Text>
+                  <TouchableOpacity onPress={() => setCategoryDropdownVisible(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={styles.dropdownList}>
+                  <TouchableOpacity
+                    style={[styles.dropdownItem, !selectedCategoryId && styles.dropdownItemSelected]}
+                    onPress={() => {
+                      setSelectedCategoryId(null);
+                      setCategoryDropdownVisible(false);
+                    }}
+                  >
+                    <Text style={[styles.dropdownItemText, !selectedCategoryId && styles.dropdownItemTextSelected]}>
+                      None (No category)
+                    </Text>
+                    {!selectedCategoryId && (
+                      <Ionicons name="checkmark" size={20} color="#007AFF" />
+                    )}
+                  </TouchableOpacity>
+                  {categories.map((category) => (
+                    <TouchableOpacity
+                      key={category.id}
+                      style={[styles.dropdownItem, selectedCategoryId === category.id && styles.dropdownItemSelected]}
+                      onPress={() => {
+                        setSelectedCategoryId(category.id);
+                        setCategoryDropdownVisible(false);
+                      }}
+                    >
+                      <Text style={[styles.dropdownItemText, selectedCategoryId === category.id && styles.dropdownItemTextSelected]}>
+                        {category.name}
+                      </Text>
+                      {selectedCategoryId === category.id && (
+                        <Ionicons name="checkmark" size={20} color="#007AFF" />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                  {categories.length === 0 && (
+                    <View style={styles.dropdownEmpty}>
+                      <Text style={styles.dropdownEmptyText}>No categories available</Text>
+                      <Text style={styles.dropdownEmptySubtext}>Add categories from the main screen</Text>
+                    </View>
+                  )}
+                </ScrollView>
+              </View>
+            </TouchableOpacity>
+          </Modal>
 
           <View style={styles.modalFooter}>
             <TouchableOpacity
@@ -433,5 +541,87 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  dropdown: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#f9f9f9',
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: '#333',
+    flex: 1,
+  },
+  dropdownPlaceholder: {
+    color: '#999',
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  dropdownModal: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '100%',
+    maxHeight: '60%',
+    overflow: 'hidden',
+  },
+  dropdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  dropdownTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  dropdownList: {
+    maxHeight: 300,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#f0f7ff',
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: '#333',
+    flex: 1,
+  },
+  dropdownItemTextSelected: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  dropdownEmpty: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  dropdownEmptyText: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 8,
+  },
+  dropdownEmptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
   },
 });
